@@ -119,7 +119,9 @@ async function settle(profile, month, days, cursor) {
   await supabase.from("months").update({ stake, donation }).eq("id", month.id);
   boot();
 }
-supabase.auth.getSession().then(boot);
+supabase.auth.getSession().then(boot).catch(e => {
+  document.getElementById("app").textContent = e.message;
+});
 </script>
 </body>
 </html>
