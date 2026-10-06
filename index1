@@ -41,7 +41,9 @@ const weekKey = (day) => {
   return x.getFullYear()+"-W"+Math.ceil((((x-y)/86400000)+1)/7);
 };
 function showError(e) {
-  document.getElementById("app").innerHTML = "<h1>Waka</h1><p class='err'>" + (e && e.message ? e.message : e) + "</p>";
+  const msg = String(e && e.message ? e.message : e);
+  if (msg.toLowerCase().includes("session")) return authView();
+  document.getElementById("app").innerHTML = "<h1>Waka</h1><p class='err'>" + msg + "</p>";
 }
 async function startMonth(userId, currency) {
   const now = new Date();
@@ -69,7 +71,7 @@ async function go(signUp) {
     const req = signUp ? sb.auth.signUp({ email, password }) : sb.auth.signInWithPassword({ email, password });
     const { data, error } = await req;
     if (error) return authView(error.message);
-    if (!data.user) return authView("No user returned. Turn off Confirm email in Supabase Authentication settings.");
+    if (!data.user) return authView("No user returned. In Supabase, turn off Confirm email, then try again.");
     if (signUp) {
       const { error: profileError } = await sb.from("profiles").insert({ id: data.user.id, currency });
       if (profileError) return authView(profileError.message);
@@ -79,7 +81,15 @@ async function go(signUp) {
   } catch (e) { showError(e); }
 }
 async function boot() {
-  const { data: { session } } = await sb.auth.getSession();
+  let session = null;
+  try {
+    const { data, error } = await sb.auth.getSession();
+    if (error) throw error;
+    session = data.session;
+  } catch (e) {
+    if (String(e.message || e).toLowerCase().includes("session")) return authView();
+    throw e;
+  }
   if (!session) return authView();
   const user = session.user;
   const { data: profile, error: profileError } = await sb.from("profiles").select().eq("id", user.id).single();
@@ -139,7 +149,7 @@ async function settle(profile, month, days, cursor) {
   if (monthError) throw monthError;
   await boot();
 }
-sb.auth.getSession().then(boot).catch(showError);
+boot().catch(showError);
 </script>
 </body>
 </html>
