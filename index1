@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Waka</title>
+<style>
+  :root { --bg:#10140f; --card:#1b2218; --line:#2c3828; --text:#e7f0e2; --muted:#9aab94; --ok:#8fd18a; --bad:#e07a6a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:16px/1.45 ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:440px; margin:0 auto; padding:22px 16px 56px; }
+  h1 { font-size:28px; letter-spacing:-.04em; margin:0; }
+  .sub { color:var(--muted); margin:4px 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin:12px 0; }
+  .row { display:flex; justify-content:space-between; gap:12px; }
+  .money { font-size:26px; font-variant-numeric:tabular-nums; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 6px; }
+  input, select, button { width:100%; border-radius:12px; border:1px solid var(--line); background:#121710; color:var(--text); padding:12px; font-size:16px; }
+  button { background:#d7f26a; color:#17200f; font-weight:700; border:0; margin-top:10px; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  .hit { color:var(--ok); } .miss { color:var(--bad); } .free { color:#e3c27a; }
+  .err { color:var(--bad); font-size:13px; }
+  .tiny { font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<main id="app">Loading Waka…</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const supabase = window.supabase.createClient("https://YOUR_PROJECT.supabase.co", "sb_publishable_7PmUNTYmU7JC_xiZH4bbpw_k9yGtfIZ");
+const FX = { USD:{rate:1,symbol:"$"}, EUR:{rate:0.92,symbol:"€"}, GBP:{rate:0.78,symbol:"£"}, CAD:{rate:1.36,symbol:"C$"}, AUD:{rate:1.52,symbol:"A$"}, INR:{rate:84,symbol:"₹"}, NGN:{rate:1550,symbol:"₦"} };
+const money = (n,c) => FX[c].symbol + Number(n).toFixed(2);
+const iso = (d) => new Date(d).toISOString().slice(0,10);
+const weekKey = (day) => {
+  const x = new Date(day+"T12:00:00");
+  x.setDate(x.getDate()+4-(x.getDay()||7));
+  const y = new Date(x.getFullYear(),0,1);
+  return x.getFullYear()+"-W"+Math.ceil((((x-y)/86400000)+1)/7);
+};
+async function startMonth(userId, currency) {
+  const now = new Date();
+  const stake = +(100 * FX[currency].rate).toFixed(2);
+  const dim = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  const { error } = await supabase.from("months").insert({
+    user_id: userId, period: iso(now).slice(0,7), stake, donation:0,
+    slice:+(stake/dim).toFixed(2), dim
+  });
+  if (error) throw error;
+}
+function authView(msg="") {
+  document.getElementById("app").innerHTML = `<h1>Waka</h1><p class="sub">Each profile keeps its own stake and steps.</p>
+    <div class="card"><label>Email</label><input id="email" type="email" />
+    <label>Password</label><input id="pw" type="password" />
+    <label>Currency, used on signup</label><select id="cur">${Object.keys(FX).map(c=>`<option>${c}</option>`).join("")}</select>
+    <button id="in">Log in</button><button class="ghost" id="up">Create profile</button>
+    <p class="err">${msg}</p></div>`;
+  document.getElementById("in").onclick = () => go(false);
+  document.getElementById("up").onclick = () => go(true);
+}
+async function go(signUp) {
+  const email = document.getElementById("email").value, password = document.getElementById("pw").value, currency = document.getElementById("cur").value;
+  const req = signUp ? supabase.auth.signUp({ email, password }) : supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await req;
+  if (error) return authView(error.message);
+  if (signUp) {
+    await supabase.from("profiles").insert({ id: data.user.id, currency });
+    await startMonth(data.user.id, currency);
+  }
+  boot();
+}
+async function boot() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return authView();
+  const { data: profile } = await supabase.from("profiles").select().eq("id", user.id).single();
+  let { data: month } = await supabase.from("months").select().eq("user_id", user.id).eq("closed", false).maybeSingle();
+  if (!month) { await startMonth(user.id, profile.currency); ({ data: month } = await supabase.from("months").select().eq("user_id", user.id).eq("closed", false).single()); }
+  const { data: days } = await supabase.from("days").select().eq("month_id", month.id);
+  draw(user, profile, month, days || []);
+}
+function draw(user, profile, month, days) {
+  const c = profile.currency;
+  const byDay = Object.fromEntries(days.map(d => [d.day, d]));
+  const cursor = iso(new Date());
+  const logged = byDay[cursor];
+  const freeLeft = !days.some(d => d.result==="free" && weekKey(d.day)===weekKey(cursor));
+  const cells = Array.from({length:month.dim}, (_,i) => {
+    const key = cursor.slice(0,8)+String(i+1).padStart(2,"0");
+    return `<div class="${byDay[key]?byDay[key].result:""}" style="text-align:center;padding:8px 0;background:#121710;border-radius:8px;font-size:12px">${i+1}</div>`;
+  }).join("");
+  document.getElementById("app").innerHTML = `<h1>Waka</h1><p class="sub">${user.email} · ${cursor} · slice ${money(month.slice,c)}</p>
+    <div class="card row"><div><div class="tiny">Stake</div><div class="money">${money(month.stake,c)}</div></div>
+    <div><div class="tiny">Donation pool</div><div class="money">${money(month.donation,c)}</div></div></div>
+    <div class="card"><div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">${cells}</div></div>
+    ${logged ? `<div class="card">Today is <b class="${logged.result}">${logged.result}</b> · ${logged.steps} steps</div>`
+      : `<div class="card"><label>Steps today</label><input id="steps" type="number" value="10000" />
+         ${freeLeft ? `<label class="tiny"><input id="free" type="checkbox" style="width:auto" /> Use free day if under 10k</label>` : `<p class="tiny">Free day used this week.</p>`}
+         <button id="log">Settle day</button></div>`}
+    <button class="ghost" id="out">Log out</button>`;
+  const log = document.getElementById("log");
+  if (log) log.onclick = () => settle(profile, month, days, cursor);
+  document.getElementById("out").onclick = async () => { await supabase.auth.signOut(); authView(); };
+}
+async function settle(profile, month, days, cursor) {
+  const steps = +document.getElementById("steps").value || 0;
+  const useFree = document.getElementById("free")?.checked;
+  let result = "hit", moved = 0, stake = +month.stake, donation = +month.donation;
+  if (steps < 10000) {
+    const used = days.some(d => d.result==="free" && weekKey(d.day)===weekKey(cursor));
+    if (useFree && !used) result = "free";
+    else {
+      result = "miss";
+      const misses = days.filter(d => d.result==="miss").length;
+      moved = Math.min(misses === month.dim-1 ? stake : +month.slice, stake);
+      stake = +(stake-moved).toFixed(2);
+      donation = +(donation+moved).toFixed(2);
+    }
+  }
+  await supabase.from("days").insert({ month_id: month.id, day: cursor, steps, result, moved });
+  await supabase.from("months").update({ stake, donation }).eq("id", month.id);
+  boot();
+}
+supabase.auth.getSession().then(boot);
+</script>
+</body>
+</html>
