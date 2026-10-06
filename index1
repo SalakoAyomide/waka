@@ -24,7 +24,7 @@
 </style>
 </head>
 <body>
-<main id="app">Loading Waka…</main>
+<main id="app"></main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const sb = window.supabase.createClient(
@@ -41,9 +41,7 @@ const weekKey = (day) => {
   return x.getFullYear()+"-W"+Math.ceil((((x-y)/86400000)+1)/7);
 };
 function showError(e) {
-  const msg = String(e && e.message ? e.message : e);
-  if (msg.toLowerCase().includes("session")) return authView();
-  document.getElementById("app").innerHTML = "<h1>Waka</h1><p class='err'>" + msg + "</p>";
+  document.getElementById("app").innerHTML = "<h1>Waka</h1><p class='err'>" + (e && e.message ? e.message : e) + "</p>";
 }
 async function startMonth(userId, currency) {
   const now = new Date();
@@ -71,27 +69,16 @@ async function go(signUp) {
     const req = signUp ? sb.auth.signUp({ email, password }) : sb.auth.signInWithPassword({ email, password });
     const { data, error } = await req;
     if (error) return authView(error.message);
-    if (!data.user) return authView("No user returned. In Supabase, turn off Confirm email, then try again.");
+    if (!data.session) return authView("Account created, but no session. In Supabase turn off Confirm email, then log in.");
     if (signUp) {
       const { error: profileError } = await sb.from("profiles").insert({ id: data.user.id, currency });
-      if (profileError) return authView(profileError.message);
+      if (profileError && !profileError.message.includes("duplicate")) return authView(profileError.message);
       await startMonth(data.user.id, currency);
     }
-    await boot();
+    await boot(data.session.user);
   } catch (e) { showError(e); }
 }
-async function boot() {
-  let session = null;
-  try {
-    const { data, error } = await sb.auth.getSession();
-    if (error) throw error;
-    session = data.session;
-  } catch (e) {
-    if (String(e.message || e).toLowerCase().includes("session")) return authView();
-    throw e;
-  }
-  if (!session) return authView();
-  const user = session.user;
+async function boot(user) {
   const { data: profile, error: profileError } = await sb.from("profiles").select().eq("id", user.id).single();
   if (profileError) throw profileError;
   let { data: month, error: monthError } = await sb.from("months").select().eq("user_id", user.id).eq("closed", false).maybeSingle();
@@ -125,10 +112,10 @@ function draw(user, profile, month, days) {
          <button id="log">Settle day</button></div>`}
     <button class="ghost" id="out">Log out</button>`;
   const log = document.getElementById("log");
-  if (log) log.onclick = () => settle(profile, month, days, cursor).catch(showError);
+  if (log) log.onclick = () => settle(profile, month, days, cursor, user).catch(showError);
   document.getElementById("out").onclick = async () => { await sb.auth.signOut(); authView(); };
 }
-async function settle(profile, month, days, cursor) {
+async function settle(profile, month, days, cursor, user) {
   const steps = +document.getElementById("steps").value || 0;
   const useFree = document.getElementById("free")?.checked;
   let result = "hit", moved = 0, stake = +month.stake, donation = +month.donation;
@@ -147,9 +134,9 @@ async function settle(profile, month, days, cursor) {
   if (dayError) throw dayError;
   const { error: monthError } = await sb.from("months").update({ stake, donation }).eq("id", month.id);
   if (monthError) throw monthError;
-  await boot();
+  await boot(user);
 }
-boot().catch(showError);
+authView();
 </script>
 </body>
 </html>
