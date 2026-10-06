@@ -69,6 +69,7 @@ async function go(signUp) {
     const req = signUp ? sb.auth.signUp({ email, password }) : sb.auth.signInWithPassword({ email, password });
     const { data, error } = await req;
     if (error) return authView(error.message);
+    if (!data.user) return authView("No user returned. Turn off Confirm email in Supabase Authentication settings.");
     if (signUp) {
       const { error: profileError } = await sb.from("profiles").insert({ id: data.user.id, currency });
       if (profileError) return authView(profileError.message);
@@ -78,9 +79,9 @@ async function go(signUp) {
   } catch (e) { showError(e); }
 }
 async function boot() {
-  const { data: { user }, error } = await sb.auth.getUser();
-  if (error) throw error;
-  if (!user) return authView();
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return authView();
+  const user = session.user;
   const { data: profile, error: profileError } = await sb.from("profiles").select().eq("id", user.id).single();
   if (profileError) throw profileError;
   let { data: month, error: monthError } = await sb.from("months").select().eq("user_id", user.id).eq("closed", false).maybeSingle();
