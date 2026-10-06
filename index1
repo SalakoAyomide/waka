@@ -27,7 +27,7 @@
 <main id="app">Loading Waka…</main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-const supabase = window.supabase.createClient(
+const sb = window.supabase.createClient(
   "https://wjnfojdiimhwuxhpiycg.supabase.co",
   "sb_publishable_7PmUNTYmU7JC_xiZH4bbpw_k9yGtfIZ"
 );
@@ -47,7 +47,7 @@ async function startMonth(userId, currency) {
   const now = new Date();
   const stake = +(100 * FX[currency].rate).toFixed(2);
   const dim = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
-  const { error } = await supabase.from("months").insert({
+  const { error } = await sb.from("months").insert({
     user_id: userId, period: iso(now).slice(0,7), stake, donation:0,
     slice:+(stake/dim).toFixed(2), dim
   });
@@ -66,11 +66,11 @@ function authView(msg="") {
 async function go(signUp) {
   try {
     const email = document.getElementById("email").value, password = document.getElementById("pw").value, currency = document.getElementById("cur").value;
-    const req = signUp ? supabase.auth.signUp({ email, password }) : supabase.auth.signInWithPassword({ email, password });
+    const req = signUp ? sb.auth.signUp({ email, password }) : sb.auth.signInWithPassword({ email, password });
     const { data, error } = await req;
     if (error) return authView(error.message);
     if (signUp) {
-      const { error: profileError } = await supabase.from("profiles").insert({ id: data.user.id, currency });
+      const { error: profileError } = await sb.from("profiles").insert({ id: data.user.id, currency });
       if (profileError) return authView(profileError.message);
       await startMonth(data.user.id, currency);
     }
@@ -78,19 +78,19 @@ async function go(signUp) {
   } catch (e) { showError(e); }
 }
 async function boot() {
-  const { data: { user }, error } = await supabase.auth.getUser();
+  const { data: { user }, error } = await sb.auth.getUser();
   if (error) throw error;
   if (!user) return authView();
-  const { data: profile, error: profileError } = await supabase.from("profiles").select().eq("id", user.id).single();
+  const { data: profile, error: profileError } = await sb.from("profiles").select().eq("id", user.id).single();
   if (profileError) throw profileError;
-  let { data: month, error: monthError } = await supabase.from("months").select().eq("user_id", user.id).eq("closed", false).maybeSingle();
+  let { data: month, error: monthError } = await sb.from("months").select().eq("user_id", user.id).eq("closed", false).maybeSingle();
   if (monthError) throw monthError;
   if (!month) {
     await startMonth(user.id, profile.currency);
-    ({ data: month, error: monthError } = await supabase.from("months").select().eq("user_id", user.id).eq("closed", false).single());
+    ({ data: month, error: monthError } = await sb.from("months").select().eq("user_id", user.id).eq("closed", false).single());
     if (monthError) throw monthError;
   }
-  const { data: days, error: daysError } = await supabase.from("days").select().eq("month_id", month.id);
+  const { data: days, error: daysError } = await sb.from("days").select().eq("month_id", month.id);
   if (daysError) throw daysError;
   draw(user, profile, month, days || []);
 }
@@ -115,7 +115,7 @@ function draw(user, profile, month, days) {
     <button class="ghost" id="out">Log out</button>`;
   const log = document.getElementById("log");
   if (log) log.onclick = () => settle(profile, month, days, cursor).catch(showError);
-  document.getElementById("out").onclick = async () => { await supabase.auth.signOut(); authView(); };
+  document.getElementById("out").onclick = async () => { await sb.auth.signOut(); authView(); };
 }
 async function settle(profile, month, days, cursor) {
   const steps = +document.getElementById("steps").value || 0;
@@ -132,13 +132,13 @@ async function settle(profile, month, days, cursor) {
       donation = +(donation+moved).toFixed(2);
     }
   }
-  const { error: dayError } = await supabase.from("days").insert({ month_id: month.id, day: cursor, steps, result, moved });
+  const { error: dayError } = await sb.from("days").insert({ month_id: month.id, day: cursor, steps, result, moved });
   if (dayError) throw dayError;
-  const { error: monthError } = await supabase.from("months").update({ stake, donation }).eq("id", month.id);
+  const { error: monthError } = await sb.from("months").update({ stake, donation }).eq("id", month.id);
   if (monthError) throw monthError;
   await boot();
 }
-supabase.auth.getSession().then(boot).catch(showError);
+sb.auth.getSession().then(boot).catch(showError);
 </script>
 </body>
 </html>
