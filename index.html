@@ -1,1 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Waka</title>
+<style>
+  :root { --bg:#10140f; --card:#1b2218; --line:#2c3828; --text:#e7f0e2; --muted:#9aab94; --ok:#8fd18a; --bad:#e07a6a; --gold:#e3c27a; --btn:#d7f26a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.45 ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:440px; margin:0 auto; padding:22px 16px 56px; }
+  h1 { font-size:28px; letter-spacing:-.04em; margin:0; }
+  .sub { color:var(--muted); margin:4px 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin:12px 0; }
+  .row { display:flex; justify-content:space-between; gap:12px; }
+  .money { font-size:26px; font-variant-numeric:tabular-nums; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 6px; }
+  input, select, button { width:100%; border-radius:12px; border:1px solid var(--line); background:#121710; color:var(--text); padding:12px; font-size:16px; }
+  button { background:var(--btn); color:#17200f; font-weight:700; border:0; margin-top:10px; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  .hit { color:var(--ok); } .miss { color:var(--bad); } .free { color:var(--gold); }
+  .days { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
+  .day { text-align:center; border-radius:8px; padding:8px 0; background:#121710; font-size:12px; }
+  .tiny { font-size:12px; color:var(--muted); }
+  .check { display:flex; gap:8px; align-items:center; color:var(--text); font-size:14px; }
+  .check input { width:auto; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+const FX = {
+  USD:{rate:1, symbol:"$"}, EUR:{rate:0.92, symbol:"€"}, GBP:{rate:0.78, symbol:"£"},
+  CAD:{rate:1.36, symbol:"C$"}, AUD:{rate:1.52, symbol:"A$"}, INR:{rate:84, symbol:"₹"}, NGN:{rate:1550, symbol:"₦"}
+};
+const CHARITIES = {
+  USD:["American Cancer Society","St. Jude Children's Research Hospital"],
+  EUR:["Irish Cancer Society","Dutch Cancer Society"],
+  GBP:["Cancer Research UK","Macmillan Cancer Support"],
+  CAD:["Canadian Cancer Society","Princess Margaret Cancer Foundation"],
+  AUD:["Cancer Council Australia","Peter MacCallum Cancer Centre"],
+  INR:["Indian Cancer Society","Tata Memorial Centre"],
+  NGN:["Nigeria Cancer Society","Medicaid Cancer Foundation"]
+};
+const KEY = "waka-v1";
+const load = () => JSON.parse(localStorage.getItem(KEY) || "null");
+const save = (s) => localStorage.setItem(KEY, JSON.stringify(s));
+const money = (n, c) => FX[c].symbol + Number(n).toFixed(2);
+const iso = (d) => d.toISOString().slice(0,10);
+const weekKey = (d) => {
+  const x = new Date(d); x.setHours(12,0,0,0);
+  x.setDate(x.getDate() + 4 - (x.getDay() || 7));
+  const y = new Date(x.getFullYear(),0,1);
+  return x.getFullYear()+"-W"+Math.ceil((((x-y)/86400000)+1)/7);
+};
+const daysInMonth = (d) => new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
 
+function fresh(currency) {
+  const now = new Date();
+  const stake = +(100 * FX[currency].rate).toFixed(2);
+  const dim = daysInMonth(now);
+  return { currency, stake, donation:0, dim, slice:+(stake/dim).toFixed(2), cursor:iso(now), days:{}, freeUsed:{}, closed:false, vote:null, voluntary:0 };
+}
+
+function settle(state, steps, useFree) {
+  if (state.days[state.cursor] || state.closed) return;
+  const d = new Date(state.cursor+"T12:00:00");
+  const wk = weekKey(d);
+  let result = "hit", moved = 0;
+  if (steps < 10000) {
+    if (useFree && !state.freeUsed[wk]) { result = "free"; state.freeUsed[wk] = true; }
+    else {
+      result = "miss";
+      const misses = Object.values(state.days).filter(x => x.result==="miss").length;
+      moved = misses === state.dim - 1 ? +state.stake.toFixed(2) : state.slice;
+      moved = Math.min(moved, state.stake);
+      state.stake = +(state.stake - moved).toFixed(2);
+      state.donation = +(state.donation + moved).toFixed(2);
+    }
+  }
+  state.days[state.cursor] = { steps, result, moved };
+  const next = new Date(d); next.setDate(next.getDate()+1);
+  if (next.getMonth() !== d.getMonth()) state.closed = true;
+  else state.cursor = iso(next);
+}
+
+function render() {
+  const app = document.getElementById("app");
+  const state = load();
+  if (!state) {
+    app.innerHTML = `<h1>Waka</h1><p class="sub">Walk 10,000 steps. Miss a day and that slice of play money moves to a cancer donation pool.</p>
+      <div class="card"><label>Currency</label><select id="cur">${Object.keys(FX).map(c=>`<option>${c}</option>`).join("")}</select>
+      <button id="go">Start with 100 USD</button><p class="tiny">Play money only. Credited in the currency you pick, split across the days of this month. One free day each week.</p></div>`;
+    document.getElementById("go").onclick = () => { save(fresh(document.getElementById("cur").value)); render(); };
+    return;
+  }
+  const d = new Date(state.cursor+"T12:00:00");
+  const freeLeft = !state.freeUsed[weekKey(d)];
+  const today = state.days[state.cursor];
+  const cells = Array.from({length:state.dim}, (_,i) => {
+    const key = state.cursor.slice(0,8)+String(i+1).padStart(2,"0");
+    const rec = state.days[key];
+    return `<div class="day ${rec?rec.result:""}">${i+1}</div>`;
+  }).join("");
+  app.innerHTML = `<h1>Waka</h1><p class="sub">${state.cursor} · slice ${money(state.slice, state.currency)} · goal 10,000</p>
+    <div class="card row"><div><div class="tiny">Stake</div><div class="money">${money(state.stake, state.currency)}</div></div>
+    <div><div class="tiny">Donation pool</div><div class="money">${money(state.donation, state.currency)}</div></div></div>
+    <div class="card"><div class="days">${cells}</div><p class="tiny">Green hit, gold free day, red miss.</p></div>
+    ${state.closed ? closeView(state) : dayView(today, freeLeft)}
+    <button class="ghost" id="reset">Reset Waka</button>`;
+  const log = document.getElementById("log");
+  if (log) log.onclick = () => { settle(state, +document.getElementById("steps").value || 0, document.getElementById("free")?.checked); save(state); render(); };
+  const vote = document.getElementById("vote");
+  if (vote) vote.onclick = () => {
+    state.vote = document.getElementById("charity").value;
+    state.voluntary = +document.getElementById("gift").value || 0;
+    state.donation = +(state.donation + state.voluntary).toFixed(2);
+    save(state); render();
+  };
+  const roll = document.getElementById("roll");
+  if (roll) roll.onclick = () => { save(fresh(state.currency)); render(); };
+  document.getElementById("reset").onclick = () => { localStorage.removeItem(KEY); render(); };
+}
+function dayView(today, freeLeft) {
+  if (today) return `<div class="card">Settled <b class="${today.result}">${today.result}</b> · ${today.steps.toLocaleString()} steps</div>`;
+  return `<div class="card"><label>Steps today</label><input id="steps" type="number" min="0" value="10000" />
+    ${freeLeft ? `<label class="check"><input id="free" type="checkbox" /> Use this week's free day if under 10k</label>` : `<p class="tiny">Free day already used this week.</p>`}
+    <button id="log">Settle day</button></div>`;
+}
+function closeView(state) {
+  if (!state.vote) return `<div class="card"><p>Month closed. Vote where the pool goes.</p>
+    <select id="charity">${CHARITIES[state.currency].map(n=>`<option>${n}</option>`).join("")}</select>
+    <label>Optional extra play-money gift</label><input id="gift" type="number" min="0" value="0" />
+    <button id="vote">Lock vote</button></div>`;
+  return `<div class="card"><p>Voted <b>${state.vote}</b>. Pool ${money(state.donation, state.currency)}.</p><button id="roll">Start next month</button></div>`;
+}
+render();
+</script>
+</body>
+</html>
